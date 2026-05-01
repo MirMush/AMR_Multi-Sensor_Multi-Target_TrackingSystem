@@ -112,12 +112,9 @@ class EKF:
 		"""
 		Set initial state and covariance from first measurement.
 		
-		For radar: converts [range, bearing] to NED position.
+		For radar/camera: converts [range, bearing] to NED position.
 		Velocity is initialized to zero.
 		"""
-		if sensor_id != 'radar':
-			raise ValueError(f"Task 3: radar only. Got '{sensor_id}'")
-		
 		z = np.asarray(z, dtype=float).reshape(-1)
 		
 		# Extract sensor position and convert to NED
