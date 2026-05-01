@@ -8,9 +8,12 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+TASK6_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+for _path in (TASK6_ROOT, PROJECT_ROOT):
+    path_str = str(_path)
+    if path_str not in sys.path:
+        sys.path.insert(0, path_str)
 
 from tracking import (  # noqa: E402
     CVEKFHooks,

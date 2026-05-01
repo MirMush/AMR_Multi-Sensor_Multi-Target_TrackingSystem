@@ -14,23 +14,23 @@ It uses fake data so you can debug T6 logic before full integration of T3-T5 and
 Keep these for the Task 6 pipeline:
 
 - `coord_frame_manager.py`
-- `tracking/types.py`
-- `tracking/utils.py`
-- `tracking/measurement_models.py`
-- `tracking/baseline_ekf.py`
-- `tracking/gating.py`
-- `tracking/association.py`
-- `tracking/fusion_cycle.py`
-- `tracking/fake_data.py`
-- `scripts/run_task6_sandbox.py`
-- `scripts/visualize_task6_sandbox.py`
-- `TASK6_SETUP.md`
+- `task6/tracking/types.py`
+- `task6/tracking/utils.py`
+- `task6/tracking/measurement_models.py`
+- `task6/tracking/baseline_ekf.py`
+- `task6/tracking/gating.py`
+- `task6/tracking/association.py`
+- `task6/tracking/fusion_cycle.py`
+- `task6/tracking/fake_data.py`
+- `task6/scripts/run_task6_sandbox.py`
+- `task6/scripts/visualize_task6_sandbox.py`
+- `task6/TASK6_SETUP.md`
 
 Generated files like `__pycache__/` and `outputs/` are not required and can be deleted safely.
 
 ## 2) One-cycle step-by-step (what actually happens)
 
-Each scan (time `t`) goes through this flow in `tracking/fusion_cycle.py`:
+Each scan (time `t`) goes through this flow in `task6/tracking/fusion_cycle.py`:
 
 1. Input:
    - current tracks (`x`, `P`)
@@ -79,13 +79,13 @@ So the gate is an uncertainty-aware ellipse, not a fixed-radius circle.
 From repo root:
 
 ```bash
-python scripts/run_task6_sandbox.py
+python task6/scripts/run_task6_sandbox.py
 ```
 
 With visual output:
 
 ```bash
-python scripts/visualize_task6_sandbox.py
+python task6/scripts/visualize_task6_sandbox.py
 ```
 
 Outputs:
