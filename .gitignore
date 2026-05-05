@@ -1,0 +1,6 @@
+.conda/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.vscode/
+harbour_sim_output/*.png
