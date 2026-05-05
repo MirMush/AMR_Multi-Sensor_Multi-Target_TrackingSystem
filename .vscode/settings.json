@@ -1,4 +1,29 @@
 {
     "python-envs.defaultEnvManager": "ms-python.python:conda",
-    "python-envs.defaultPackageManager": "ms-python.python:conda"
+    "python-envs.defaultPackageManager": "ms-python.python:conda",
+    "ROS2.distro": "humble",
+    "python.autoComplete.extraPaths": [
+        "/home/felix/ros2_ws/install/turtlesim_catch_them_all/lib/python3.10/site-packages",
+        "/home/felix/ros2_ws/install/my_py_pkg/lib/python3.10/site-packages",
+        "/home/felix/ros2_ws/install/exercises/lib/python3.10/site-packages",
+        "/home/felix/ros2_ws/install/actions_py/lib/python3.10/site-packages",
+        "/home/felix/ros2_ws/install/my_robot_interfaces/local/lib/python3.10/dist-packages",
+        "/home/felix/ros2_ws/install/lifecycle_py/lib/python3.10/site-packages",
+        "/home/felix/ros2_ws/install/executors_py/lib/python3.10/site-packages",
+        "/home/felix/ros2_ws/install/components_py/lib/python3.10/site-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ],
+    "python.analysis.extraPaths": [
+        "/home/felix/ros2_ws/install/turtlesim_catch_them_all/lib/python3.10/site-packages",
+        "/home/felix/ros2_ws/install/my_py_pkg/lib/python3.10/site-packages",
+        "/home/felix/ros2_ws/install/exercises/lib/python3.10/site-packages",
+        "/home/felix/ros2_ws/install/actions_py/lib/python3.10/site-packages",
+        "/home/felix/ros2_ws/install/my_robot_interfaces/local/lib/python3.10/dist-packages",
+        "/home/felix/ros2_ws/install/lifecycle_py/lib/python3.10/site-packages",
+        "/home/felix/ros2_ws/install/executors_py/lib/python3.10/site-packages",
+        "/home/felix/ros2_ws/install/components_py/lib/python3.10/site-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ]
 }
