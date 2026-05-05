@@ -80,10 +80,14 @@ def get_gt_state(tid: int, t: float) -> np.ndarray | None:
 # ---------------------------------------------------------------------------
 # Group measurements by timestamp
 # ---------------------------------------------------------------------------
-meas_by_time: dict[float, list[dict]] = defaultdict(list)
-for m in data["measurements"]:
-    if m["sensor_id"] in ("radar", "camera"):
-        meas_by_time[round(float(m["time"]), 6)].append(m)
+meas_sorted: list[tuple[float, dict]] = sorted(
+    [(float(m["time"]), m) for m in data["measurements"]
+     if m["sensor_id"] in ("radar", "camera")],
+    key=lambda x: x[0],
+)
+
+def _meas_in_window(t_hi: float) -> list[dict]:
+    return [m for ts, m in meas_sorted if t_hi - DT < ts <= t_hi]
 
 # ---------------------------------------------------------------------------
 # Detection factory
@@ -214,7 +218,7 @@ for idx, t in enumerate(np.arange(1.0, t_end + DT, DT)):
         if state is not None:
             path.append(state[:2].copy())
 
-    detections = make_detections(t, meas_by_time.get(t, []), measurement_model)
+    detections = make_detections(t, _meas_in_window(t), measurement_model)
 
     cycle_result = run_fusion_cycle(
         time_s            = t,

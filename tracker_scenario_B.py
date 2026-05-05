@@ -7,7 +7,6 @@ Implements and compares:
 """
 
 import json
-from collections import defaultdict
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -36,13 +35,19 @@ def detect_sensor_ids(data):
     return radar_id, camera_id
 
 
-def group_measurements_by_sensor_and_time(measurements, sensor_ids):
-    grouped = {sid: defaultdict(list) for sid in sensor_ids}
+def group_measurements_by_sensor(measurements, sensor_ids):
+    """Returns {sid: sorted list of (time, meas)} for window-based lookup."""
+    grouped = {sid: [] for sid in sensor_ids}
     for m in measurements:
         sid = m["sensor_id"]
         if sid in grouped and m.get("range_m") is not None and m.get("bearing_rad") is not None:
-            grouped[sid][round(float(m["time"]), 6)].append(m)
+            grouped[sid].append((float(m["time"]), m))
+    for sid in grouped:
+        grouped[sid].sort(key=lambda x: x[0])
     return grouped
+
+def meas_in_window(meas_sorted: list, t_hi: float, dt: float) -> list:
+    return [m for ts, m in meas_sorted if t_hi - dt < ts <= t_hi]
 
 
 def select_best_gated_measurement(ekf, cfm, sensor_id, measurements_at_t, gate_prob=0.99):
@@ -198,7 +203,7 @@ def main():
     sensor_configs = data.get("sensor_configs", {})
 
     radar_id, camera_id = detect_sensor_ids(data)
-    grouped = group_measurements_by_sensor_and_time(data["measurements"], [radar_id, camera_id])
+    grouped = group_measurements_by_sensor(data["measurements"], [radar_id, camera_id])
 
     gt_times = np.array([row[0] for row in gt_states], dtype=float)
     gt_arr = np.array([row[1:] for row in gt_states], dtype=float)
@@ -250,8 +255,8 @@ def main():
         cfm_seq.update_vessel_pos(vN, vE)
         cfm_cen.update_vessel_pos(vN, vE)
 
-        radar_meas = grouped[radar_id].get(t, [])
-        camera_meas = grouped[camera_id].get(t, [])
+        radar_meas  = meas_in_window(grouped[radar_id],  t, DT)
+        camera_meas = meas_in_window(grouped[camera_id], t, DT)
         if radar_meas and camera_meas:
             overlap_times_total += 1
             overlap_times_with_raw.append(t)

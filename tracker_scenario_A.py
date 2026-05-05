@@ -12,7 +12,6 @@ import json
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import chi2
-from collections import defaultdict
 
 from coord_frame_manager import CoordFrameManager
 from EKF import EKF
@@ -36,11 +35,14 @@ t_end            = float(data["t_end"])
 vessel_positions = data["vessel_positions"]
 gt_states        = data["ground_truth"]["0"]   # single target, ID 0
 
-# Group radar measurements by timestamp: { t -> [m1, m2, ...] }
-radar_by_time = defaultdict(list)
-for m in data["measurements"]:
-    if m["sensor_id"] == SENSOR_ID:
-        radar_by_time[round(m["time"], 6)].append(m)
+# Sorted list of (time, measurement) — lookup by window (t-DT, t]
+radar_meas_sorted = sorted(
+    [(float(m["time"]), m) for m in data["measurements"] if m["sensor_id"] == SENSOR_ID],
+    key=lambda x: x[0],
+)
+
+def get_meas_in_window(t_hi: float, dt: float) -> list:
+    return [m for ts, m in radar_meas_sorted if t_hi - dt < ts <= t_hi]
 
 # Ground truth lookup
 gt_times = np.array([row[0] for row in gt_states])
@@ -84,8 +86,8 @@ for t in np.arange(1.0, t_end + dt, dt):
     pN_v, pE_v = get_vessel_pos(t)
     cfm.update_vessel_pos(pN_v, pE_v)
 
-    # All radar measurements that arrived at this tick
-    measurements_at_t = radar_by_time.get(t, [])
+    # All radar measurements that arrived in this 1-Hz window
+    measurements_at_t = get_meas_in_window(t, dt)
 
     # --- Wait for first radar hit to initialize EKF ---
     if not initialized:

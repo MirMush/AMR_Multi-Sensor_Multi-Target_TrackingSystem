@@ -7,7 +7,6 @@ Implements and compares:
 """
 
 import json
-from collections import defaultdict
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -233,22 +232,25 @@ def run_tracker(data, cfm, use_ais: bool, label: str):
         i = np.argmin(np.abs(vp_times - t))
         return float(vessel_positions[i][1]), float(vessel_positions[i][2])
 
-    # Group measurements
-    radar_by_t  = defaultdict(list)
-    camera_by_t = defaultdict(list)
-    ais_queue   = []
+    # Sorted lists for window-based lookup (t-DT, t]
+    radar_sorted  = sorted(
+        [(float(m["time"]), m) for m in measurements
+         if m["sensor_id"] == "radar" and m.get("range_m") is not None],
+        key=lambda x: x[0],
+    )
+    camera_sorted = sorted(
+        [(float(m["time"]), m) for m in measurements
+         if m["sensor_id"] == "camera" and m.get("range_m") is not None],
+        key=lambda x: x[0],
+    )
+    ais_queue = sorted(
+        [(float(m["time"]), m) for m in measurements
+         if m["sensor_id"] == "ais" and m.get("north_m") is not None],
+        key=lambda x: x[0],
+    )
 
-    for m in measurements:
-        sid = m["sensor_id"]
-        t_m = round(float(m["time"]), 6)
-        if sid == "radar"  and m.get("range_m")  is not None:
-            radar_by_t[t_m].append(m)
-        elif sid == "camera" and m.get("range_m") is not None:
-            camera_by_t[t_m].append(m)
-        elif sid == "ais"    and m.get("north_m") is not None:
-            ais_queue.append((float(m["time"]), m))
-
-    ais_queue.sort(key=lambda x: x[0])
+    def _win(lst, t_hi):
+        return [m for ts, m in lst if t_hi - DT < ts <= t_hi]
     ais_idx = 0
 
     ekf                   = EKF(cfm=cfm, sigma_a=SIGMA_A)
@@ -271,8 +273,8 @@ def run_tracker(data, cfm, use_ais: bool, label: str):
         vN, vE = get_vessel(t)
         cfm.update_vessel_pos(vN, vE)
 
-        radar_meas  = radar_by_t.get(t,  [])
-        camera_meas = camera_by_t.get(t, [])
+        radar_meas  = _win(radar_sorted,  t)
+        camera_meas = _win(camera_sorted, t)
 
         # ---- Initialisation ------------------------------------------------
         if not initialized:
