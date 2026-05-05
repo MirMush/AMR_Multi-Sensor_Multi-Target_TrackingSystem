@@ -4,3 +4,4 @@ __pycache__/
 .ipynb_checkpoints/
 .vscode/
 harbour_sim_output/*.png
+.vscode/settings.json
