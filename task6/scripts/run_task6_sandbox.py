@@ -23,6 +23,8 @@ for _path in (TASK6_ROOT, PROJECT_ROOT):
     if p not in sys.path:
         sys.path.insert(0, p)
 
+from scipy.optimize import linear_sum_assignment  # noqa: E402
+
 from tracking import (  # noqa: E402
     CVEKFHooks,
     CoordFrameMeasurementModel,
@@ -129,6 +131,33 @@ def initialize_tracks(gt_data: dict) -> list[Track]:
     return tracks
 
 # ---------------------------------------------------------------------------
+# MOTP helper: match tracks to ground truth via Hungarian, return mean dist
+# ---------------------------------------------------------------------------
+def compute_motp(tracks: list[Track], gt_states: dict[int, np.ndarray]) -> float | None:
+    """
+    Match confirmed tracks to active ground-truth targets via minimum-distance
+    Hungarian assignment. Returns mean position error over all matched pairs,
+    or None if there are no tracks or no targets.
+    """
+    if not tracks or not gt_states:
+        return None
+
+    track_pos = np.array([t.x[:2] for t in tracks])          # (M, 2)
+    gt_pos    = np.array(list(gt_states.values()))[:, :2]     # (N, 2)
+
+    # Cost matrix: Euclidean distance between every track-target pair
+    M, N = len(track_pos), len(gt_pos)
+    cost = np.zeros((M, N))
+    for i in range(M):
+        for j in range(N):
+            cost[i, j] = np.linalg.norm(track_pos[i] - gt_pos[j])
+
+    rows, cols = linear_sum_assignment(cost)
+    if len(rows) == 0:
+        return None
+    return float(np.mean(cost[rows, cols]))
+
+# ---------------------------------------------------------------------------
 # Helper: convert [range, bearing] + sensor origin → NED position for plotting
 # ---------------------------------------------------------------------------
 def det_to_ned(sensor_id: str, z: np.ndarray, vessel_pos: np.ndarray) -> np.ndarray:
@@ -157,6 +186,8 @@ unmatched_track_hist  = []
 unmatched_det_hist    = []
 consistent_hist       = []
 conflicting_hist      = []
+motp_hist             = []   # MOTP per tick (None when no tracks/targets)
+ce_hist               = []   # Cardinality Error per tick
 
 # Summary counters
 total_gated       = 0
@@ -226,6 +257,15 @@ for idx, t in enumerate(np.arange(1.0, t_end + DT, DT)):
     truth_consistent  += consistent
     truth_conflicting += conflicting
 
+    # --- MOTP and CE ---
+    active_gt = {tid: get_gt_state(tid, t) for tid in gt_times_by_target
+                 if get_gt_state(tid, t) is not None}
+    motp_val = compute_motp(tracks, active_gt)
+    ce_val   = abs(len(tracks) - len(active_gt))
+
+    motp_hist.append(motp_val)
+    ce_hist.append(ce_val)
+
     time_hist.append(t)
     det_count_hist.append(len(detections))
     gated_count_hist.append(len(cycle_result.gated_candidates))
@@ -245,6 +285,12 @@ for idx, t in enumerate(np.arange(1.0, t_end + DT, DT)):
         )
 
 n_cycles = max(len(time_hist), 1)
+
+motp_valid = [v for v in motp_hist if v is not None]
+ce_arr     = np.array(ce_hist, dtype=float)
+motp_mean  = float(np.mean(motp_valid)) if motp_valid else float("nan")
+ce_mean    = float(np.mean(ce_arr))
+
 print("\n" + "=" * 60)
 print("Summary")
 print(f"  Cycles                   : {n_cycles}")
@@ -255,6 +301,8 @@ print(f"  Truth-conflicting matches: {truth_conflicting}")
 if truth_consistent + truth_conflicting > 0:
     pct = 100.0 * truth_consistent / (truth_consistent + truth_conflicting)
     print(f"  Association accuracy     : {pct:.1f}%")
+print(f"  MOTP (mean position err) : {motp_mean:.2f} m  (target < 15 m)")
+print(f"  CE   (cardinality error) : {ce_mean:.3f}    (target < 0.5)")
 print("=" * 60)
 
 # ---------------------------------------------------------------------------
@@ -308,10 +356,14 @@ fig.savefig(map_out, dpi=180)
 plt.show()
 
 # ---------------------------------------------------------------------------
-# Plot 2 — Association diagnostics
+# Plot 2 — Association diagnostics + MOTP + CE
 # ---------------------------------------------------------------------------
 times = np.array(time_hist)
-fig, axes = plt.subplots(2, 1, figsize=(11, 7), sharex=True)
+
+# Replace None MOTP values with nan for plotting
+motp_plot = np.array([v if v is not None else np.nan for v in motp_hist])
+
+fig, axes = plt.subplots(4, 1, figsize=(11, 12), sharex=True)
 
 axes[0].plot(times, det_count_hist,       label="All detections",      color="tab:blue")
 axes[0].plot(times, gated_count_hist,     label="Gated pairs",         color="tab:orange")
@@ -326,9 +378,21 @@ axes[1].plot(times, consistent_hist,      label="Consistent matches",  color="ta
 axes[1].plot(times, conflicting_hist,     label="Conflicting matches", color="black", alpha=0.7)
 axes[1].axvspan(50, 70, alpha=0.1, color="tab:red", label="Crossing window")
 axes[1].set_ylabel("Count")
-axes[1].set_xlabel("Time [s]")
 axes[1].grid(True, alpha=0.3)
 axes[1].legend(ncol=2, fontsize=8)
+
+axes[2].plot(times, motp_plot, color="tab:blue", label="MOTP")
+axes[2].axhline(15, color="r", linestyle="--", label="Target (15 m)")
+axes[2].set_ylabel("MOTP [m]")
+axes[2].grid(True, alpha=0.3)
+axes[2].legend()
+
+axes[3].plot(times, ce_arr, color="tab:orange", label="CE")
+axes[3].axhline(0.5, color="r", linestyle="--", label="Target (0.5)")
+axes[3].set_ylabel("Cardinality Error")
+axes[3].set_xlabel("Time [s]")
+axes[3].grid(True, alpha=0.3)
+axes[3].legend()
 
 fig.suptitle("Scenario D — Association Diagnostics")
 fig.tight_layout()
