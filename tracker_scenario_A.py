@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 T3 — Single-target EKF tracker, Scenario A (radar only).
 
@@ -6,6 +7,7 @@ Reads scenario_A.json, runs the EKF, and reports:
   - NIS consistency (fraction within 95% chi2(2) bounds)
   - Trajectory plot
 """
+
 import json
 import numpy as np
 import matplotlib.pyplot as plt
