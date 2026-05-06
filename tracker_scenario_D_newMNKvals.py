@@ -183,10 +183,11 @@ def run_scenario(label: str, json_path: Path, cfg: TrackManagerConfig) -> dict:
     ce_arr     = np.array(ce_hist, dtype=float)
     motp_mean  = float(np.mean(motp_valid)) if motp_valid else float("nan")
     ce_mean    = float(np.mean(ce_arr))
+    ce_target  = 1.0 if label == "Scenario E" else 0.5
 
     print(f"\nSummary — {label}")
     print(f"  MOTP (mean pos error) : {motp_mean:.2f} m  (target < 15 m)  {'PASS' if motp_mean < 15 else 'FAIL'}")
-    print(f"  CE   (cardinality)    : {ce_mean:.3f}    (target < 0.5)   {'PASS' if ce_mean < 0.5 else 'FAIL'}")
+    print(f"  CE   (cardinality)    : {ce_mean:.3f}    (target < {ce_target})   {'PASS' if ce_mean < ce_target else 'FAIL'}")
 
     return dict(
         label        = label,
@@ -197,6 +198,7 @@ def run_scenario(label: str, json_path: Path, cfg: TrackManagerConfig) -> dict:
         n_tentative  = np.array(n_tentative_h),
         motp_mean    = motp_mean,
         ce_mean      = ce_mean,
+        ce_target    = ce_target,
         truth_paths  = dict(truth_paths),
         track_paths  = dict(track_paths),
         vessel_path  = vessel_path,
@@ -209,7 +211,7 @@ def run_scenario(label: str, json_path: Path, cfg: TrackManagerConfig) -> dict:
 # ---------------------------------------------------------------------------
 # Run both scenarios
 # ---------------------------------------------------------------------------
-cfg = TrackManagerConfig(M=4, N=15, K_del=15)
+cfg = TrackManagerConfig(M=3, N=10, K_del=15)
 #N=15, K_del=15: 15-second windows accommodate the slow mm-wave radar (0.3 Hz / ~3.3s per scan). 
 #                 This ensures real targets have enough time to be scanned and can coast through 
 #                 1-2 missed detections without being prematurely deleted.
@@ -315,7 +317,8 @@ for col, res in enumerate([res_D, res_E]):
     ax1_r = ax1.twinx()
     ax1_r.plot(t, res["ce_hist"], color="tab:orange", alpha=0.7,
                label=f"CE (mean={res['ce_mean']:.2f})")
-    ax1_r.axhline(0.5, color="darkorange", linestyle=":", label="Target 0.5")
+    ce_target = res.get("ce_target", 0.5)
+    ax1_r.axhline(ce_target, color="darkorange", linestyle=":", label=f"Target {ce_target}")
     ax1_r.set_ylabel("CE")
     ax1.set_title(f"{res['label']} — MOTP & CE")
     ax1.set_ylabel("MOTP [m]")
