@@ -46,15 +46,35 @@ def get_vessel_pos(vessel_positions, t: float):
     return float(vessel_positions[idx][1]), float(vessel_positions[idx][2])
 
 
+def _ais_polar_R(mm: CoordFrameMeasurementModel, north_m: float, east_m: float) -> np.ndarray:
+    """Convert AIS NED position noise (sigma_pos_ais) to polar (range, bearing) noise."""
+    vN, vE = mm._manager.vessel_pos
+    dN = north_m - vN
+    dE = east_m  - vE
+    r  = float(np.hypot(dN, dE))
+    if r < 1e-3:
+        s = mm._manager.sigma_pos_ais * 1e3
+        return np.diag([s**2, s**2])
+    J = np.array([[dN / r,     dE / r    ],
+                  [-dE / r**2,  dN / r**2]], dtype=float)
+    sigma = mm._manager.sigma_pos_ais
+    return J @ (sigma**2 * np.eye(2)) @ J.T
+
+
 def make_detections(t, meas_list, mm: CoordFrameMeasurementModel) -> list[Detection]:
     global _det_counter
     dets = []
     for m in meas_list:
         sid = m["sensor_id"]
-        if sid not in ("radar", "camera"):
+        if sid in ("radar", "camera"):
+            z       = np.array([m["range_m"], m["bearing_rad"]], dtype=float)
+            _, _, R = mm.predict(np.zeros(4), sid)
+        elif sid == "ais" and m.get("north_m") is not None and m.get("target_id", -1) != -1:
+            nN, nE  = float(m["north_m"]), float(m["east_m"])
+            z       = mm._manager.ais_ned_to_range_bearing(nN, nE)
+            R       = _ais_polar_R(mm, nN, nE)
+        else:
             continue
-        z        = np.array([m["range_m"], m["bearing_rad"]], dtype=float)
-        _, _, R  = mm.predict(np.zeros(4), sid)
         dets.append(Detection(
             detection_id   = f"{sid}_{_det_counter}",
             time_s         = t,
@@ -103,7 +123,7 @@ def run_scenario(label: str, json_path: Path, cfg: TrackManagerConfig) -> dict:
 
     meas_sorted = sorted(
         [(float(m["time"]), m) for m in data["measurements"]
-         if m["sensor_id"] in ("radar", "camera")],
+         if m["sensor_id"] in ("radar", "camera", "ais")],
         key=lambda x: x[0],
     )
 
@@ -132,7 +152,7 @@ def run_scenario(label: str, json_path: Path, cfg: TrackManagerConfig) -> dict:
     truth_paths : dict[int, list] = defaultdict(list)
     track_paths : dict[int, list] = defaultdict(list)
     vessel_path : list            = []
-    det_ned     : dict[str, list] = {"radar": [], "camera": [], "false_alarm": []}
+    det_ned     : dict[str, list] = {"radar": [], "camera": [], "ais": [], "false_alarm": []}
 
     print(f"\n{'='*60}")
     print(f"T7 — {label}  ({json_path.name})")
@@ -163,7 +183,12 @@ def run_scenario(label: str, json_path: Path, cfg: TrackManagerConfig) -> dict:
 
         # Detection positions for map
         for d in dets:
-            pt = det_to_ned(d.sensor_id, d.z, vessel_ned)
+            if d.sensor_id == "ais":
+                # AIS z is already [range, bearing] from vessel; convert back to NED
+                r, phi = float(d.z[0]), float(d.z[1])
+                pt = vessel_ned + np.array([r * np.cos(phi), r * np.sin(phi)])
+            else:
+                pt = det_to_ned(d.sensor_id, d.z, vessel_ned)
             if d.is_false_alarm:
                 det_ned["false_alarm"].append(pt)
             else:
@@ -211,7 +236,7 @@ def run_scenario(label: str, json_path: Path, cfg: TrackManagerConfig) -> dict:
 # ---------------------------------------------------------------------------
 # Run both scenarios
 # ---------------------------------------------------------------------------
-cfg = TrackManagerConfig(M=3, N=10, K_del=15)
+cfg = TrackManagerConfig(M=3, N=15, K_del=10)
 #N=15, K_del=15: 15-second windows accommodate the slow mm-wave radar (0.3 Hz / ~3.3s per scan). 
 #                 This ensures real targets have enough time to be scanned and can coast through 
 #                 1-2 missed detections without being prematurely deleted.
@@ -259,6 +284,7 @@ def plot_map(ax, res: dict, title: str) -> None:
         styles = {
             "radar":       ("tab:cyan",  ".", "Radar det",  0.25),
             "camera":      ("tab:pink",  ".", "Camera det", 0.25),
+            "ais":         ("lime",      "D", "AIS det",    0.70),
             "false_alarm": ("black",     "x", "False alarm",0.40),
         }
         col, mk, lbl, alpha = styles[key]
