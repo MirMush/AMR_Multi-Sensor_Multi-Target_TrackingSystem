@@ -109,6 +109,15 @@ def run_scenario(label: str, json_path: Path, cfg: TrackManagerConfig) -> dict:
     data             = load_scenario(json_path)
     t_end            = float(data["t_end"])
     vessel_positions = data["vessel_positions"]
+    # Real data: vessel_positions is empty — reconstruct from GNSS measurements
+    if not vessel_positions:
+        vessel_positions = sorted(
+            [[float(m["time"]), float(m["north_m"]), float(m["east_m"])]
+             for m in data["measurements"]
+             if m["sensor_id"] == "gnss" and m.get("north_m") is not None
+             and m.get("target_id", -1) == -1],
+            key=lambda x: x[0],
+        )
     gt_data          = data["ground_truth"]
 
     gt_times = {int(k): np.array([r[0] for r in v], dtype=float) for k, v in gt_data.items()}
@@ -209,10 +218,15 @@ def run_scenario(label: str, json_path: Path, cfg: TrackManagerConfig) -> dict:
     motp_mean  = float(np.mean(motp_valid)) if motp_valid else float("nan")
     ce_mean    = float(np.mean(ce_arr))
     ce_target  = 1.0 if label == "Scenario E" else 0.5
+    has_gt     = len(gt_times) > 0
 
     print(f"\nSummary — {label}")
-    print(f"  MOTP (mean pos error) : {motp_mean:.2f} m  (target < 15 m)  {'PASS' if motp_mean < 15 else 'FAIL'}")
-    print(f"  CE   (cardinality)    : {ce_mean:.3f}    (target < {ce_target})   {'PASS' if ce_mean < ce_target else 'FAIL'}")
+    if has_gt:
+        print(f"  MOTP (mean pos error) : {motp_mean:.2f} m  (target < 15 m)  {'PASS' if motp_mean < 15 else 'FAIL'}")
+        print(f"  CE   (cardinality)    : {ce_mean:.3f}    (target < {ce_target})   {'PASS' if ce_mean < ce_target else 'FAIL'}")
+    else:
+        print(f"  No ground truth — qualitative evaluation only")
+        print(f"  Mean confirmed tracks : {float(np.mean(n_active_hist)):.2f}")
 
     return dict(
         label        = label,
@@ -224,6 +238,7 @@ def run_scenario(label: str, json_path: Path, cfg: TrackManagerConfig) -> dict:
         motp_mean    = motp_mean,
         ce_mean      = ce_mean,
         ce_target    = ce_target,
+        has_gt       = has_gt,
         truth_paths  = dict(truth_paths),
         track_paths  = dict(track_paths),
         vessel_path  = vessel_path,
@@ -234,7 +249,7 @@ def run_scenario(label: str, json_path: Path, cfg: TrackManagerConfig) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Run both scenarios
+# Run all scenarios
 # ---------------------------------------------------------------------------
 cfg = TrackManagerConfig(M=3, N=15, K_del=10)
 #N=15, K_del=15: 15-second windows accommodate the slow mm-wave radar (0.3 Hz / ~3.3s per scan). 
@@ -251,6 +266,11 @@ res_D = run_scenario(
 res_E = run_scenario(
     "Scenario E",
     PROJECT_ROOT / "harbour_sim_output" / "scenario_E.json",
+    cfg,
+)
+res_W = run_scenario(
+    "Real World",
+    PROJECT_ROOT / "scenario_real_corrected.json",
     cfg,
 )
 
@@ -361,4 +381,81 @@ stats_out = PROJECT_ROOT / "harbour_sim_output" / "task7_stats.png"
 fig_stats.savefig(stats_out, dpi=180)
 plt.show()
 
-print(f"\nPlots saved:\n  {map_out}\n  {stats_out}")
+# ---------------------------------------------------------------------------
+# Figure 3 — Real World data overlaid on harbour map
+# ---------------------------------------------------------------------------
+HARBOUR_IMG  = PROJECT_ROOT / "Experimental data" / "new_map.png"
+# NED extent of the harbour image [East_min, East_max, North_min, North_max]
+# (read from axis labels in visualise.png)
+HARBOUR_EXTENT = [-520, 3000, -1000, 3000]
+
+
+fig_w, ax_w = plt.subplots(figsize=(10, 12))
+
+if HARBOUR_IMG.exists():
+    harbour_img = plt.imread(str(HARBOUR_IMG))
+    ax_w.imshow(harbour_img, extent=HARBOUR_EXTENT, aspect="auto", zorder=0, alpha=0.6)
+
+# AIS reference positions — grouped by MMSI (unique vessel ID, like a ship's passport number).
+# ais_id is a local label reused across different vessels; MMSI is the real unique identifier.
+with open(PROJECT_ROOT / "scenario_real_corrected.json") as _f:
+    _raw = json.load(_f)
+_ais_ref: dict[int, list] = defaultdict(list)
+for _m in sorted(_raw["measurements"], key=lambda x: x["time"]):
+    if _m["sensor_id"] == "ais" and _m.get("north_m") is not None and _m["target_id"] != -1:
+        mmsi = int(_m["metadata"]["mmsi"])
+        _ais_ref[mmsi].append(np.array([float(_m["north_m"]), float(_m["east_m"])]))
+
+_ais_cmap   = plt.cm.get_cmap("tab20", len(_ais_ref))
+_first_ais  = True
+for i, (mmsi, path) in enumerate(sorted(_ais_ref.items())):
+    arr = np.array(path)
+    lbl = "AIS vessels" if _first_ais else "_nolegend_"
+    _first_ais = False
+    ax_w.scatter(arr[:, 1], arr[:, 0], s=8, c="gray", marker="D",
+                 alpha=0.4, zorder=2, label=lbl)
+
+# Raw detections on map
+_radar_pts  = np.array(res_W["det_ned"]["radar"])   if res_W["det_ned"]["radar"]  else None
+_camera_pts = np.array(res_W["det_ned"]["camera"])  if res_W["det_ned"]["camera"] else None
+if _radar_pts is not None:
+    ax_w.scatter(_radar_pts[:, 1],  _radar_pts[:, 0],  s=3, c="gray",
+                 alpha=0.20, zorder=2, label="Radar det")
+if _camera_pts is not None:
+    ax_w.scatter(_camera_pts[:, 1], _camera_pts[:, 0], s=6, c="gray",
+                 alpha=0.35, zorder=2, label="Camera det")
+
+# Confirmed tracks (only tracks with ≥5 points to filter noise)
+COLORS_W = ["tab:blue", "tab:orange", "tab:green", "tab:red",
+            "tab:purple", "tab:brown", "tab:pink"]
+for i, (tid, path) in enumerate(sorted(res_W["track_paths"].items())):
+    if len(path) < 5:
+        continue
+    arr = np.array(path)
+    ax_w.plot(arr[:, 1], arr[:, 0], "-", lw=1.8,
+              color=COLORS_W[i % len(COLORS_W)], alpha=0.9,
+              zorder=4, label=f"Track {tid}")
+
+# Vessel path
+if res_W["vessel_path"]:
+    vp = np.array(res_W["vessel_path"])
+    ax_w.plot(vp[:, 1], vp[:, 0], color="gray", lw=1, alpha=0.5, zorder=2, label="Vessel")
+
+# Sensor markers
+ax_w.scatter([0], [0], c="black", marker="*", s=200, zorder=5, label="Radar")
+ax_w.scatter([res_W["CAMERA_POS"][1]], [res_W["CAMERA_POS"][0]],
+             c="gold", marker="^", s=160, zorder=5, label="Camera")
+
+ax_w.set_xlim(HARBOUR_EXTENT[0], HARBOUR_EXTENT[1])
+ax_w.set_ylim(HARBOUR_EXTENT[2], HARBOUR_EXTENT[3])
+ax_w.set_xlabel("East [m]")
+ax_w.set_ylabel("North [m]")
+ax_w.set_title("T7 Real World — Confirmed Tracks vs AIS Reference")
+ax_w.grid(True, alpha=0.3, zorder=1)
+ax_w.legend(fontsize=8, ncol=2)
+fig_w.tight_layout()
+real_out = PROJECT_ROOT / "harbour_sim_output" / "task7_real.png"
+fig_w.savefig(real_out, dpi=180)
+plt.show()
+
+print(f"\nPlots saved:\n  {map_out}\n  {stats_out}\n  {real_out}")

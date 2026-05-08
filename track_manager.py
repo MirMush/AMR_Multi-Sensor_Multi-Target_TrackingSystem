@@ -44,8 +44,11 @@ class TrackManagerConfig:
     K_del: int = 15   # consecutive missed ticks before deletion. Radar gap = 3 ticks, so
                       # K_del must exceed the inter-scan gap to avoid spurious deletions.
     merge_threshold: float = 9.21   # Mahalanobis² threshold for duplicate merge (chi2(2), 99%)
+    absorb_radius_m: float = 40.0   # tentative track within this distance of a confirmed track is deleted
     gate_probability: float = 0.99
     sigma_a: float = 0.05
+    max_speed_ms: float = 15.0      # camera false-alarm chains at 20m/1s give v≈20 m/s → blocked
+    max_tentative_disp_m: float = 30.0  # max euclidean distance for tentative track association
 
 
 @dataclass
@@ -133,6 +136,17 @@ class TrackManager:
 
         match_by_track = {ti: di for ti, di, _ in association.matches}
 
+        # Euclidean displacement cap for all tracks.
+        # Prevents coasting tracks with large P (wide Mahalanobis gate) from
+        # grabbing distant false alarms that reset consecutive_misses and keep
+        # zombie tracks alive indefinitely.
+        for ti, di in list(match_by_track.items()):
+            det     = available[di]
+            ned_det = self._det_to_ned(det)
+            ned_trk = predicted_tracks[ti].x[:2]
+            if np.linalg.norm(ned_det - ned_trk) > self._cfg.max_tentative_disp_m:
+                del match_by_track[ti]
+
         # 3. Update matched tracks / flag misses
         updated_managed: list[ManagedTrack] = []
         for idx, (mt, pred_track) in enumerate(zip(active, predicted_tracks)):
@@ -143,8 +157,11 @@ class TrackManager:
                 updated_trk  = self._hooks.update(pred_track, det)
                 new_misses   = 0
                 hit          = True
-                # Velocity init on second detection for tentative tracks
-                if mt.status == TENTATIVE and mt.first_detection is not None:
+                # Velocity init on second detection for tentative tracks.
+                # Skip for AIS: vessel position changes between detections so the
+                # sensor origin used in _init_velocity would be wrong.
+                if (mt.status == TENTATIVE and mt.first_detection is not None
+                        and det.sensor_id != "ais"):
                     updated_trk = self._init_velocity(updated_trk, det, mt)
             else:
                 updated_trk = pred_track
@@ -203,7 +220,9 @@ class TrackManager:
         if mt.status == TENTATIVE:
             hits_in_window = sum(history[-self._cfg.N:])
             if hits_in_window >= self._cfg.M:
-                return CONFIRMED
+                speed = float(np.linalg.norm(mt.track.x[2:4]))
+                if speed <= self._cfg.max_speed_ms:
+                    return CONFIRMED
             return TENTATIVE
 
         if mt.status in (CONFIRMED, COASTING):
@@ -284,8 +303,11 @@ class TrackManager:
 
     def _merge_duplicates(self, tracks: list[ManagedTrack]) -> list[ManagedTrack]:
         """
-        Merge pairs of tracks whose Mahalanobis distance is below threshold.
-        Keep the older / higher-status track; discard the duplicate.
+        1. Absorb any tentative track whose Euclidean position is within
+           absorb_radius_m of a confirmed/coasting track — prevents false-alarm
+           tracks near real targets from ever confirming.
+        2. Merge pairs of active tracks whose Mahalanobis distance is below
+           merge_threshold; keep the higher-status / older track.
         """
         if len(tracks) < 2:
             return tracks
@@ -293,6 +315,22 @@ class TrackManager:
         status_rank = {CONFIRMED: 3, COASTING: 2, TENTATIVE: 1, DELETED: 0}
         to_remove: set[int] = set()
 
+        confirmed_positions = [
+            (i, tracks[i].track.x[:2])
+            for i in range(len(tracks))
+            if tracks[i].status in (CONFIRMED, COASTING)
+        ]
+
+        # Step 1: absorb tentative tracks that are too close to a confirmed track
+        for j, mt in enumerate(tracks):
+            if mt.status != TENTATIVE or j in to_remove:
+                continue
+            for _, cp in confirmed_positions:
+                if np.linalg.norm(mt.track.x[:2] - cp) < self._cfg.absorb_radius_m:
+                    to_remove.add(j)
+                    break
+
+        # Step 2: Mahalanobis-based merge for remaining pairs
         for i in range(len(tracks)):
             if i in to_remove:
                 continue
@@ -307,13 +345,18 @@ class TrackManager:
                 except np.linalg.LinAlgError:
                     continue
                 if d2 < self._cfg.merge_threshold:
-                    # Discard the lower-status / younger track
                     rank_i = status_rank.get(tracks[i].status, 0)
                     rank_j = status_rank.get(tracks[j].status, 0)
                     discard = j if rank_i >= rank_j else i
                     to_remove.add(discard)
 
         return [mt for idx, mt in enumerate(tracks) if idx not in to_remove]
+
+    def _det_to_ned(self, det: Detection) -> np.ndarray:
+        """Convert a range/bearing detection to NED position."""
+        s = self._sensor_origin(det.sensor_id)
+        r, phi = float(det.z[0]), float(det.z[1])
+        return s + np.array([r * np.cos(phi), r * np.sin(phi)])
 
     def _sensor_origin(self, sensor_id: str) -> np.ndarray:
         """Return NED position of the sensor (uses measurement model internals)."""
